@@ -1,3 +1,8 @@
+/**
+ * Michael Tran - 9083087123
+ * 
+ */
+
 #include "catalog.h"
 #include "query.h"
 #include <iostream>
