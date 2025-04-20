@@ -20,85 +20,95 @@ const Status QU_Delete(const string & relation,
                        const Datatype type,
                        const char *attrValue)
 {
-        Status status;
-    HeapFileScan* hfs = nullptr;
-    RID rid;
+    Status status;
+        RID rid;
+    AttrDesc attrDesc;
+    HeapFileScan *hfs;
 
-    if (relation.empty()) return BADCATPARM;
+        if(relation.empty()){
+                return BADCATPARM;
+        }
 
-    hfs = new HeapFileScan(relation, status);
-    if (status != OK) {
-        delete hfs;
-        return status;
+    if(attrName.empty()) {
+        // delete all records > creating scanner object
+        hfs = new HeapFileScan(relation, status);
+        if (status != OK)
+        {
+            return status;
+        }
+        // start the scan
+        hfs->startScan(0, 0, STRING, NULL, op); //EQ?
+
+        while ((status = hfs->scanNext(rid)) != FILEEOF)
+        {
+            status = hfs->deleteRecord();
+            if (status != OK)
+            {
+                return status;
+            }
+        }
     }
+    else // if not empty
+    {
+        hfs = new HeapFileScan(relation, status);
+        if (status != OK)
+        {
+            return status;
+        }
 
-    if (attrName.empty()) {
-        // Delete all records
-        status = hfs->startScan(0, 0, INTEGER, nullptr, op);
-    } else {
-        // Get attribute metadata
-        AttrDesc attrDesc;
+        // get attribute metadata
         status = attrCat->getInfo(relation, attrName, attrDesc);
-        if (status != OK) {
+        if (status != OK)
+        {
             delete hfs;
             return status;
         }
 
-        // Validate type consistency
-        if (static_cast<Datatype>(attrDesc.attrType) != type) {
-            delete hfs;
-            return BADCATPARM;
+        // switch for data type
+        int intVal;
+        float floatVal;
+        switch (type)
+        {
+        case INTEGER:
+            intVal = atoi(attrValue);
+            status = hfs->startScan(attrDesc.attrOffset, attrDesc.attrLen, type, (char *)&intVal, op);
+            break;
+        case FLOAT:
+            floatVal = atof(attrValue);
+            status = hfs->startScan(attrDesc.attrOffset, attrDesc.attrLen, type, (char *)&floatVal, op);
+            break;
+        // string
+        default:
+            status = hfs->startScan(attrDesc.attrOffset, attrDesc.attrLen, type, attrValue, op);
+            break;
         }
 
-        // Convert string filter value to binary
-        void* filterValue = malloc(attrDesc.attrLen);
-        if (!filterValue) {
+        if (status != OK)
+        {
             delete hfs;
-            return INSUFMEM;
+            return status;
         }
 
-        switch(type) {
-            case INTEGER:
-                *((int*)filterValue) = atoi(attrValue);
-                break;
-            case FLOAT:
-                *((float*)filterValue) = atof(attrValue);
-                break;
-            case STRING:
-                strncpy((char*)filterValue, attrValue, attrDesc.attrLen);
-                break;
-            default:
-                free(filterValue);
+        while ((status = hfs->scanNext(rid)) == OK)
+        {
+            status = hfs->deleteRecord();
+            if (status != OK)
+            {
                 delete hfs;
-                return BADCATPARM;
+                return status;
+            }
         }
-
-        // Start scan with properly converted value
-        status = hfs->startScan(attrDesc.attrOffset,attrDesc.attrLen,type,(char*)filterValue,op);
-        free(filterValue);
     }
-
-    if (status != OK) {
+    // not end of file yet
+    if (status != FILEEOF)
+    {
         delete hfs;
         return status;
     }
 
-    // Delete matching records
-    while ((status = hfs->scanNext(rid)) == OK) {
-        status = hfs->deleteRecord();
-        if (status != OK) break;
-    }
+    // end scan cuz end of file
+    hfs->endScan();
+    delete hfs;
 
-        // just to see if we hit eof
-        if(status == FILEEOF){
-                status = OK;
-        }
-        // end scan
-        Status endStatus = hfs->endScan();
-        delete hfs;
-
-        if(status == OK){
-                status = endStatus;
-        }
-        return status;
+    return OK;
 }
