@@ -1,3 +1,8 @@
+/**
+ * @file insert.C
+ * Author: Shrey Katyal
+ * ID: 9086052256
+*/ 
 #include "catalog.h"
 #include "query.h"
 #include <cstring>
