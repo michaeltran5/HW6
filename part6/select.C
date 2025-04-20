@@ -1,176 +1,158 @@
 #include "catalog.h"
 #include "query.h"
-#include <string.h>
+#include <iostream>
+#include <cstdlib> 
 
-const Status QU_Select(const string & result, 
-                       const int projCnt, 
+using namespace std;
+
+const Status ScanSelect(const string &result,
+                        const int projCnt,
+                        const AttrDesc projNames[],
+                        const AttrDesc *attrDesc,
+                        const Operator op,
+                        const char *filter,
+                        const int reclen);
+
+/*
+ * Selects records from the specified relation. Result of the selection is stored in the result relation called result.
+ * This is a helper method that organizes the data and then calls ScanSelect
+ *
+ * Returns:
+ *  OK on success
+ *  an error code otherwise
+ */
+const Status QU_Select(const string &result,
+                       const int projCnt,
                        const attrInfo projNames[],
-                       const attrInfo *attr, 
-                       const Operator op, 
+                       const attrInfo *attr,
+                       const Operator op,
                        const char *attrValue)
 {
     cout << "Doing QU_Select" << endl;
-
     Status status;
-    AttrDesc* attrs = new AttrDesc[projCnt];
-    int reclen = 0;
+
+    AttrDesc* projNamesArr = new AttrDesc[projCnt];
+    AttrDesc* projNamesPtr = nullptr;
 
     for (int i = 0; i < projCnt; i++) {
-        status = attrCat->getInfo(projNames[i].relName, projNames[i].attrName, attrs[i]);
+        status = attrCat->getInfo(projNames[i].relName, projNames[i].attrName, projNamesArr[i]);
         if (status != OK) {
-            delete[] attrs;
+            delete[] projNamesArr;
             return status;
         }
-        reclen += attrs[i].attrLen;
     }
 
-    if (attr != NULL) {
-        AttrDesc attrDesc;
-        status = attrCat->getInfo(attr->relName, attr->attrName, attrDesc);
+    if (attr != nullptr) {
+        projNamesPtr = new AttrDesc;
+        status = attrCat->getInfo(attr->relName, attr->attrName, *projNamesPtr);
         if (status != OK) {
-            delete[] attrs;
+            delete[] projNamesArr;
+            delete projNamesPtr;
             return status;
         }
-
-        char* filter = nullptr;
-
-        // Convert attrValue to appropriate binary format
-        if (attrDesc.attrType == INTEGER) {
-            filter = new char[sizeof(int)];
-            int val = atoi(attrValue);
-            memcpy(filter, &val, sizeof(int));
-        } else if (attrDesc.attrType == FLOAT) {
-            filter = new char[sizeof(float)];
-            float val = atof(attrValue);
-            memcpy(filter, &val, sizeof(float));
-        } else if (attrDesc.attrType == STRING) {
-            filter = new char[attrDesc.attrLen];
-            memset(filter, 0, attrDesc.attrLen);
-            int copyLen = strlen(attrValue);
-            if (copyLen > attrDesc.attrLen) copyLen = attrDesc.attrLen;
-            memcpy(filter, attrValue, copyLen);
-        }
-
-        // Now do the scan + select
-        cout << "Doing HeapFileScan Selection using ScanSelect()" << endl;
-
-        HeapFileScan* scan = new HeapFileScan(projNames[0].relName, status);
-        if (status != OK) {
-            delete[] attrs;
-            delete[] filter;
-            return status;
-        }
-
-        InsertFileScan resultFile(result, status);
-        if (status != OK) {
-            delete scan;
-            delete[] attrs;
-            delete[] filter;
-            return status;
-        }
-
-        status = scan->startScan(attrDesc.attrOffset,
-                                 attrDesc.attrLen,
-                                 (Datatype)attrDesc.attrType,
-                                 filter, op);
-        delete[] filter;
-
-        if (status != OK) {
-            delete scan;
-            delete[] attrs;
-            return status;
-        }
-
-        RID rid;
-        while ((status = scan->scanNext(rid)) == OK) {
-            Record rec;
-            status = scan->getRecord(rec);
-            if (status != OK) break;
-
-            char* outputData = new char[reclen];
-            memset(outputData, 0, reclen);
-
-            int outOffset = 0;
-            for (int i = 0; i < projCnt; i++) {
-                memcpy(outputData + outOffset,
-                       (char*)rec.data + attrs[i].attrOffset,
-                       attrs[i].attrLen);
-                outOffset += attrs[i].attrLen;
-            }
-
-            Record outRec;
-            outRec.data = outputData;
-            outRec.length = reclen;
-
-            RID outRID;
-            status = resultFile.insertRecord(outRec, outRID);
-
-            delete[] outputData;
-            if (status != OK) break;
-        }
-
-        if (status == FILEEOF) status = OK;
-
-        scan->endScan();
-        delete scan;
-    } 
-    else {
-        cout << "Doing HeapFileScan Selection using ScanSelect()" << endl;
-
-        HeapFileScan* scan = new HeapFileScan(projNames[0].relName, status);
-        if (status != OK) {
-            delete[] attrs;
-            return status;
-        }
-
-        InsertFileScan resultFile(result, status);
-        if (status != OK) {
-            delete scan;
-            delete[] attrs;
-            return status;
-        }
-
-        status = scan->startScan(0, 0, STRING, NULL, EQ);
-        if (status != OK) {
-            delete scan;
-            delete[] attrs;
-            return status;
-        }
-
-        RID rid;
-        while ((status = scan->scanNext(rid)) == OK) {
-            Record rec;
-            status = scan->getRecord(rec);
-            if (status != OK) break;
-
-            char* outputData = new char[reclen];
-            memset(outputData, 0, reclen);
-
-            int outOffset = 0;
-            for (int i = 0; i < projCnt; i++) {
-                memcpy(outputData + outOffset,
-                       (char*)rec.data + attrs[i].attrOffset,
-                       attrs[i].attrLen);
-                outOffset += attrs[i].attrLen;
-            }
-
-            Record outRec;
-            outRec.data = outputData;
-            outRec.length = reclen;
-
-            RID outRID;
-            status = resultFile.insertRecord(outRec, outRID);
-
-            delete[] outputData;
-            if (status != OK) break;
-        }
-
-        if (status == FILEEOF) status = OK;
-
-        scan->endScan();
-        delete scan;
     }
 
-    delete[] attrs;
+    int reclength = 0;
+    for (int i = 0; i < projCnt; i++) {
+        reclength += projNamesArr[i].attrLen;
+    }
+
+    status = ScanSelect(result, projCnt, projNamesArr, projNamesPtr, op, attrValue, reclength);
+
+    delete[] projNamesArr;
+    if (projNamesPtr) delete projNamesPtr;
+
     return status;
+}
+
+/*
+ * This method performs selection using a HeapFileScan.
+ *
+ * Returns:
+ *  OK on success
+ *  an error code otherwise
+ */
+const Status ScanSelect(const string &result,
+                        const int projCnt,
+                        const AttrDesc projNames[],
+                        const AttrDesc *attrDesc,
+                        const Operator op,
+                        const char *filter,
+                        const int reclen)
+{
+    cout << "Doing HeapFileScan Selection using ScanSelect()" << endl;
+    Status status;
+
+    Record outputTable;
+    RID tempRID;
+    Record tempRec;
+
+    InsertFileScan resultRel(result, status);
+    if (status != OK) {
+        return status;
+    }
+
+    outputTable.length = reclen;
+    outputTable.data = new char[reclen];
+
+    HeapFileScan scan(projNames[0].relName, status);
+    if (status != OK) {
+        delete[] (char*)outputTable.data;
+        return status;
+    }
+
+    if (attrDesc == nullptr) {
+        status = scan.startScan(0, 0, STRING, nullptr, EQ);
+    } else {
+        switch (attrDesc->attrType) {
+            case STRING:
+                status = scan.startScan(attrDesc->attrOffset, attrDesc->attrLen, STRING, filter, op);
+                break;
+            case FLOAT: {
+                float fval = atof(filter);
+                status = scan.startScan(attrDesc->attrOffset, attrDesc->attrLen, FLOAT, (char*)&fval, op);
+                break;
+            }
+            case INTEGER: {
+                int ival = atoi(filter);
+                status = scan.startScan(attrDesc->attrOffset, attrDesc->attrLen, INTEGER, (char*)&ival, op);
+                break;
+            }
+        }
+    }
+
+    if (status != OK) {
+        delete[] (char*)outputTable.data;
+        return status;
+    }
+
+    while (scan.scanNext(tempRID) == OK) {
+        if ((status = scan.getRecord(tempRec)) != OK) {
+            delete[] (char*)outputTable.data;
+            return status;
+        }
+
+        int offset = 0;
+        for (int i = 0; i < projCnt; i++) {
+            memcpy((char*)outputTable.data + offset,
+                   (char*)tempRec.data + projNames[i].attrOffset,
+                   projNames[i].attrLen);
+            offset += projNames[i].attrLen;
+        }
+
+        RID outRID;
+        status = resultRel.insertRecord(outputTable, outRID);
+        if (status != OK) {
+            delete[] (char*)outputTable.data;
+            return status;
+        }
+    }
+
+    if ((status = scan.endScan()) != OK && status != FILEEOF) {
+        delete[] (char*)outputTable.data;
+        return status;
+    }
+
+    delete[] (char*)outputTable.data;
+    return OK;
 }
